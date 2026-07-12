@@ -15,6 +15,7 @@ Design notes:
   the time the expense was recorded, so editing someone's household weight
   later never rewrites history.
 """
+import os
 import sqlite3
 from contextlib import contextmanager
 
@@ -90,6 +91,22 @@ _MIGRATIONS = [
 class Database:
     def __init__(self, path: str):
         self.path = path
+        # If DB_PATH points into a directory that doesn't exist yet (e.g. a
+        # Railway Volume that failed to attach, or simply the very first boot
+        # before anything has been written), create it instead of crashing.
+        # This does NOT replace needing a real persistent Volume mounted at
+        # that path -- without one, this directory is still wiped on every
+        # redeploy -- it just stops a missing folder from crash-looping the bot.
+        db_dir = os.path.dirname(os.path.abspath(path))
+        if db_dir:
+            try:
+                os.makedirs(db_dir, exist_ok=True)
+            except OSError as e:
+                raise RuntimeError(
+                    f"نتونستم پوشه‌ی دیتابیس رو بسازم: {db_dir} ({e}). "
+                    "اگه روی Railway هستی، مطمئن شو یک Volume با Mount Path دقیقاً "
+                    "همون مسیر ساخته و به این سرویس وصل شده."
+                ) from e
         with self._conn() as con:
             con.executescript(SCHEMA)
         self._run_migrations()
