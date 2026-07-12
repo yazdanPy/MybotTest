@@ -1,0 +1,25 @@
+[Unit]
+Description=Hesabkitab Telegram Bot (ربات حساب‌کتاب دوستانه)
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_LINUX_USERNAME
+WorkingDirectory=/path/to/hesabkitab_bot
+ExecStart=/path/to/hesabkitab_bot/.venv/bin/python bot.py
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/path/to/hesabkitab_bot/.env
+
+[Install]
+WantedBy=multi-user.target
+
+# --- راهنمای استفاده ---
+# 1) این فایل رو با مقادیر واقعی (یوزرنیم لینوکس، مسیر پوشه) ویرایش کن
+# 2) کپی کن به:  /etc/systemd/system/hesabkitab-bot.service
+# 3) اجرا کن:
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable hesabkitab-bot
+#      sudo systemctl start hesabkitab-bot
+# 4) بررسی وضعیت:  sudo systemctl status hesabkitab-bot
+# 5) دیدن لاگ‌ها:   sudo journalctl -u hesabkitab-bot -f

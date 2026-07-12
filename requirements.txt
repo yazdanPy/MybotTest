@@ -1,0 +1,5 @@
+python-telegram-bot==22.8
+jdatetime==5.3.0
+openpyxl==3.1.5
+python-dotenv==1.2.2
+socksio==1.0.0
