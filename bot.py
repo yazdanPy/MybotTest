@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Entry point: wires up the database and every handler, then starts polling Telegram."""
+
 import logging
 
 from telegram import Update, BotCommand
@@ -8,7 +9,16 @@ from telegram.ext import Application, MessageHandler, CallbackQueryHandler, filt
 import config
 from database import Database
 from handlers.common import error_handler
-from handlers import registration, members, expenses, payments, reports, groupsetup, help as help_module
+from handlers import (
+    registration,
+    members,
+    expenses,
+    payments,
+    reports,
+    groupsetup,
+    help as help_module,
+    programs,
+)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -29,20 +39,23 @@ async def unknown_callback(update: Update, context):
 
 
 async def post_init(application: Application):
-    await application.bot.set_my_commands([
-        BotCommand("start", "شروع / عضویت در ربات"),
-        BotCommand("expense", "ثبت هزینه جدید"),
-        BotCommand("payment", "ثبت پرداخت"),
-        BotCommand("balance", "وضعیت حساب من"),
-        BotCommand("history", "تاریخچه هزینه‌ها"),
-        BotCommand("report", "گزارش کامل گروه (مدیر)"),
-        BotCommand("export", "خروجی اکسل (مدیر)"),
-        BotCommand("members", "مدیریت اعضا (مدیر)"),
-        BotCommand("pending", "درخواست‌های در انتظار (مدیر)"),
-        BotCommand("setgroup", "ثبت گروه برای اطلاع‌رسانی خودکار"),
-        BotCommand("help", "راهنما"),
-        BotCommand("cancel", "لغو عملیات جاری"),
-    ])
+    await application.bot.set_my_commands(
+        [
+            BotCommand("start", "شروع / عضویت در ربات"),
+            BotCommand("expense", "ثبت هزینه جدید"),
+            BotCommand("payment", "ثبت پرداخت"),
+            BotCommand("balance", "وضعیت حساب من"),
+            BotCommand("history", "تاریخچه هزینه‌ها"),
+            BotCommand("report", "گزارش کامل گروه (مدیر)"),
+            BotCommand("export", "خروجی اکسل (مدیر)"),
+            BotCommand("members", "مدیریت اعضا (مدیر)"),
+            BotCommand("pending", "درخواست‌های در انتظار (مدیر)"),
+            BotCommand("programs", "مدیریت برنامه‌های سفر (مدیر)"),
+            BotCommand("setgroup", "ثبت گروه برای اطلاع‌رسانی خودکار"),
+            BotCommand("help", "راهنما"),
+            BotCommand("cancel", "لغو عملیات جاری"),
+        ]
+    )
     logger.info("Bot commands registered.")
 
 
@@ -59,11 +72,12 @@ def build_application() -> Application:
     application = builder.build()
     application.bot_data["db"] = Database(config.DB_PATH)
 
-    # --- conversations (order matters only in that these must come before the catch-alls)
+    # --- conversations
     application.add_handler(registration.registration_conv)
     application.add_handler(members.members_conv)
     application.add_handler(expenses.expense_conv)
     application.add_handler(payments.payment_conv)
+    application.add_handler(programs.programs_conv)
 
     # --- standalone command handlers
     application.add_handler(members.pending_command_handler)
@@ -86,8 +100,10 @@ def build_application() -> Application:
     application.add_handler(reports.delete_expense_query_handler)
     application.add_handler(reports.view_receipt_query_handler)
 
-    # --- catch-alls (must be added last so specific handlers above get first refusal)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_text))
+    # --- catch-alls
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_text)
+    )
     application.add_handler(CallbackQueryHandler(unknown_callback))
 
     application.add_error_handler(error_handler)
