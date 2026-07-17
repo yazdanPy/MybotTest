@@ -27,8 +27,10 @@ async def payment_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
 
     context.user_data.clear()
+    programs = db.list_programs_for_user(user["id"], active_only=True)
     await update.effective_message.reply_text(
-        "به کی پرداخت کردی؟ 💸", reply_markup=kb.payment_target_keyboard(others)
+        "به کی پرداخت کردی؟ (یا کدوم برنامه رو شارژ کردی) 💸",
+        reply_markup=kb.payment_target_keyboard(others, programs),
     )
     return PAY_TARGET
 
@@ -36,8 +38,14 @@ async def payment_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def target_chosen_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    target_id = int(query.data.split("_", 1)[1])
-    context.user_data["pay_target_id"] = target_id
+    if query.data.startswith("paytargetprog_"):
+        program_id = int(query.data.rsplit("_", 1)[1])
+        context.user_data["pay_target_program_id"] = program_id
+        context.user_data.pop("pay_target_id", None)
+    else:
+        target_id = int(query.data.split("_", 1)[1])
+        context.user_data["pay_target_id"] = target_id
+        context.user_data.pop("pay_target_program_id", None)
     await query.edit_message_text("چقدر پرداخت کردی؟ 💰 (فقط عدد، به تومان)")
     return PAY_AMOUNT
 
@@ -56,12 +64,18 @@ async def pay_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def _payment_preview(db, context) -> str:
-    target = db.get_user_by_id(context.user_data["pay_target_id"])
     amount = context.user_data["pay_amount"]
     note = context.user_data.get("pay_note")
+    program_id = context.user_data.get("pay_target_program_id")
+    if program_id:
+        program = db.get_program(program_id)
+        target_label = f"شارژ کارت مادر برنامه‌ی «{program['name']}»"
+    else:
+        target = db.get_user_by_id(context.user_data["pay_target_id"])
+        target_label = target["first_name"]
     lines = [
         "💸 <b>پیش‌نمایش پرداخت</b>",
-        f"به: {target['first_name']}",
+        f"به: {target_label}",
         f"مبلغ: {ju.format_money(amount)}",
         f"توضیح: {note if note else 'بدون توضیح'}",
         "",
@@ -97,34 +111,58 @@ async def payment_confirm_callback(update: Update, context: ContextTypes.DEFAULT
         return ConversationHandler.END
 
     sender = db.get_user_by_telegram_id(update.effective_user.id)
-    target_id = context.user_data["pay_target_id"]
     amount = context.user_data["pay_amount"]
     note = context.user_data.get("pay_note")
+    program_id = context.user_data.get("pay_target_program_id")
 
-    payment_id = db.create_payment(sender["id"], target_id, amount, note)
-    target = db.get_user_by_id(target_id)
-
-    await query.edit_message_text(
-        f"ثبت شد ✅ منتظر تایید {target['first_name']} هستیم که بگه دریافت کرده."
-    )
-
-    notify_text = (
-        f"💰 <b>{sender['first_name']}</b> میگه بهت {ju.format_money(amount)} پرداخت کرده"
-        + (f"\nتوضیح: {note}" if note else "")
-        + "\n\nتایید می‌کنی که دریافتش کردی؟"
-    )
-    try:
-        await context.bot.send_message(
-            chat_id=target["telegram_id"], text=notify_text, parse_mode="HTML",
-            reply_markup=kb.payment_receipt_keyboard(payment_id),
+    if program_id:
+        program = db.get_program(program_id)
+        charge_id = db.create_program_charge(program_id, sender["id"], amount, note)
+        await query.edit_message_text(
+            f"ثبت شد ✅ منتظر تایید مدیر گروه هستیم که شارژ «{program['name']}» رو تایید کنه."
         )
-    except Exception:
-        await query.message.reply_text(
-            "⚠️ نتونستم به طرف مقابل پیام بدم (شاید ربات رو بلاک کرده). "
-            "بهش بگو دستی وارد ربات بشه و پرداخت رو تایید کنه."
+        notify_text = (
+            f"💰 <b>{sender['first_name']}</b> میگه {ju.format_money(amount)} برای «{program['name']}» شارژ کرده"
+            + (f"\nتوضیح: {note}" if note else "")
+            + "\n\nتایید می‌کنی؟"
+        )
+        for admin in db.list_admins():
+            try:
+                await context.bot.send_message(
+                    chat_id=admin["telegram_id"], text=notify_text, parse_mode="HTML",
+                    reply_markup=kb.program_charge_confirm_keyboard(charge_id),
+                )
+            except Exception:
+                pass
+        context.user_data["pay_id_for_receipt"] = charge_id
+        context.user_data["pay_receipt_kind"] = "charge"
+    else:
+        target_id = context.user_data["pay_target_id"]
+        payment_id = db.create_payment(sender["id"], target_id, amount, note)
+        target = db.get_user_by_id(target_id)
+
+        await query.edit_message_text(
+            f"ثبت شد ✅ منتظر تایید {target['first_name']} هستیم که بگه دریافت کرده."
         )
 
-    context.user_data["pay_id_for_receipt"] = payment_id
+        notify_text = (
+            f"💰 <b>{sender['first_name']}</b> میگه بهت {ju.format_money(amount)} پرداخت کرده"
+            + (f"\nتوضیح: {note}" if note else "")
+            + "\n\nتایید می‌کنی که دریافتش کردی؟"
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=target["telegram_id"], text=notify_text, parse_mode="HTML",
+                reply_markup=kb.payment_receipt_keyboard(payment_id),
+            )
+        except Exception:
+            await query.message.reply_text(
+                "⚠️ نتونستم به طرف مقابل پیام بدم (شاید ربات رو بلاک کرده). "
+                "بهش بگو دستی وارد ربات بشه و پرداخت رو تایید کنه."
+            )
+        context.user_data["pay_id_for_receipt"] = payment_id
+        context.user_data["pay_receipt_kind"] = "payment"
+
     await query.message.reply_text(
         "می‌خوای رسید واریز رو هم ضمیمه کنی؟ 🧾 (عکس بفرست یا یه توضیح متنی بنویس)",
         reply_markup=kb.receipt_prompt_keyboard(),
@@ -145,9 +183,12 @@ async def receipt_attach_skip_callback(update: Update, context: ContextTypes.DEF
 
 async def receipt_attach_photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     db = get_db(context)
-    payment_id = context.user_data["pay_id_for_receipt"]
+    record_id = context.user_data["pay_id_for_receipt"]
     file_id = update.message.photo[-1].file_id
-    db.set_payment_receipt(payment_id, file_id=file_id)
+    if context.user_data.get("pay_receipt_kind") == "charge":
+        db.set_program_charge_receipt(record_id, file_id=file_id)
+    else:
+        db.set_payment_receipt(record_id, file_id=file_id)
     await update.message.reply_text("رسید ضمیمه شد. ✅")
     sender = db.get_user_by_telegram_id(update.effective_user.id)
     context.user_data.clear()
@@ -157,8 +198,12 @@ async def receipt_attach_photo_received(update: Update, context: ContextTypes.DE
 
 async def receipt_attach_text_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     db = get_db(context)
-    payment_id = context.user_data["pay_id_for_receipt"]
-    db.set_payment_receipt(payment_id, text=update.message.text.strip()[:1000])
+    record_id = context.user_data["pay_id_for_receipt"]
+    text = update.message.text.strip()[:1000]
+    if context.user_data.get("pay_receipt_kind") == "charge":
+        db.set_program_charge_receipt(record_id, text=text)
+    else:
+        db.set_payment_receipt(record_id, text=text)
     await update.message.reply_text("توضیح رسید ثبت شد. ✅")
     sender = db.get_user_by_telegram_id(update.effective_user.id)
     context.user_data.clear()
@@ -214,7 +259,7 @@ payment_conv = ConversationHandler(
         MessageHandler(filters.Regex(f"^{re.escape(kb.BTN_NEW_PAYMENT)}$"), payment_entry),
     ],
     states={
-        PAY_TARGET: [CallbackQueryHandler(target_chosen_callback, pattern=r"^paytarget_")],
+        PAY_TARGET: [CallbackQueryHandler(target_chosen_callback, pattern=r"^(paytarget_|paytargetprog_)")],
         PAY_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, pay_amount_received)],
         PAY_NOTE: [
             CallbackQueryHandler(note_skip_callback, pattern=r"^note_skip$"),

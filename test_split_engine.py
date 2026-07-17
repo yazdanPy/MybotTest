@@ -101,6 +101,43 @@ for uid in positions3:
 check("simplified transactions reproduce exact original net positions", recomputed == positions3)
 check("simplify never uses more transactions than (n-1)", len(txns3) <= len(positions3) - 1)
 
+# ---- Regression test: MIXED int/string ids must not crash (this is exactly
+# ---- how a long-term program's shared pool is represented -- a string
+# ---- pseudo-id like "program:5" alongside real integer user ids) ----
+ledger4 = NetLedger()
+ledger4.add_expense_debt(debtor_id=101, creditor_id="program:5", amount=200_000)  # int debtor, string creditor
+ledger4.add_expense_debt(debtor_id=102, creditor_id="program:5", amount=100_000)
+ledger4.add_payment(payer_id=102, payee_id="program:5", amount=150_000)  # 102 overpaid their share
+try:
+    pairs4 = ledger4.all_pairs()
+    check("all_pairs() does not crash with mixed int/string ids", True)
+except TypeError as e:
+    check(f"all_pairs() does not crash with mixed int/string ids -- got {e}", False)
+    pairs4 = []
+check("mixed-id pairs computed correctly (101 owes program 200,000; program owes 102 50,000)",
+      set(pairs4) == {(101, "program:5", 200_000), ("program:5", 102, 50_000)})
+
+positions4 = ledger4.net_positions()
+try:
+    txns4 = simplify_debts(positions4)
+    check("simplify_debts() does not crash with mixed int/string ids", True)
+except TypeError as e:
+    check(f"simplify_debts() does not crash with mixed int/string ids -- got {e}", False)
+    txns4 = []
+# 101 owes 200,000 total; "program:5" is owed 150,000 and 102 is owed 50,000 --
+# the greedy algorithm settles this in 2 transactions (not necessarily mirroring
+# the original pairwise relationships, since "simplify" optimizes for fewest
+# transactions, not for preserving who-originally-owed-whom).
+total_paid = sum(amt for _, _, amt in txns4)
+check("mixed-id simplification pays out exactly the total owed (200,000)", total_paid == 200_000)
+recomputed4 = {}
+for frm, to, amt in txns4:
+    recomputed4[frm] = recomputed4.get(frm, 0) - amt
+    recomputed4[to] = recomputed4.get(to, 0) + amt
+for k in positions4:
+    recomputed4.setdefault(k, 0)
+check("mixed-id simplification reproduces the exact original net positions", recomputed4 == positions4)
+
 print()
 if failures:
     print(f"*** {len(failures)} TEST(S) FAILED: {failures}")

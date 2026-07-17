@@ -88,20 +88,26 @@ class NetLedger:
         """
         All (debtor, creditor, amount) triples with amount > 0, netted,
         deduplicated so each pair appears only once (a,b) not also (b,a).
+
+        Sorting uses `key=str` because ids aren't always the same type --
+        e.g. real integer user ids can appear alongside string pseudo-ids
+        like "program:5" (used to represent a long-term program's shared
+        pool as a ledger participant). Plain `sorted()` would raise
+        TypeError comparing int to str directly; sorting by string
+        representation sidesteps that while keeping the order deterministic
+        (the exact order doesn't matter for correctness, only that pairs
+        aren't produced twice in both directions).
         """
         seen = set()
         result = []
         ids = set(self.pairwise.keys())
         for i in list(self.pairwise.keys()):
             ids.update(self.pairwise[i].keys())
-        ids = sorted(ids)
-        for i in ids:
-            for j in ids:
-                if i >= j:
-                    continue
-                if (i, j) in seen:
-                    continue
-                seen.add((i, j))
+        ids = sorted(ids, key=str)
+        n = len(ids)
+        for idx_i in range(n):
+            for idx_j in range(idx_i + 1, n):
+                i, j = ids[idx_i], ids[idx_j]
                 net = self.net_between(i, j)
                 if net > 0:
                     result.append((i, j, net))
@@ -139,9 +145,11 @@ def simplify_debts(net_positions: dict[int, int]) -> list[tuple[int, int, int]]:
     creditors = [[uid, amt] for uid, amt in net_positions.items() if amt > 0]
     debtors = [[uid, -amt] for uid, amt in net_positions.items() if amt < 0]
 
-    # deterministic ordering: biggest amounts first, tie-broken by user_id
-    creditors.sort(key=lambda x: (-x[1], x[0]))
-    debtors.sort(key=lambda x: (-x[1], x[0]))
+    # deterministic ordering: biggest amounts first, tie-broken by id
+    # (sorted as a string since ids can mix real integer user ids with
+    # string pseudo-ids like "program:5")
+    creditors.sort(key=lambda x: (-x[1], str(x[0])))
+    debtors.sort(key=lambda x: (-x[1], str(x[0])))
 
     transactions = []
     i, j = 0, 0
